@@ -177,7 +177,8 @@
 
     // Electron accelerator token → Windows display name
     const ELECTRON_TO_WIN = {
-      "Control": "Ctrl", "Super": "Win", "Meta": "Win",
+      "Control": "Ctrl", "CommandOrControl": "Ctrl",
+      "Super": "Win", "Meta": "Win",
       "Return": "Enter", "Escape": "Esc",
     };
 
@@ -214,7 +215,7 @@
 
     // ── Hotkey capture ─────────────────────────────────────────────────────────
 
-    let capturedAccelerator = "Control+Super";
+    let capturedAccelerator = "CommandOrControl+Shift+Space";
 
     function updateHotkeyBtn() {
       hotkeyBtn.textContent = electronToDisplay(capturedAccelerator);

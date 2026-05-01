@@ -40,7 +40,7 @@ function loadSettings(): Settings {
   } catch {
     // fall through to defaults
   }
-  return { hotkey: "Control+Super", microphone: "default", model: "base" };
+  return { hotkey: "CommandOrControl+Shift+Space", microphone: "default", model: "base" };
 }
 
 function saveSettings(s: Settings): void {
@@ -275,6 +275,7 @@ ipcMain.handle("get-audio-devices", async () => {
 
 function registerHotkey(accelerator: string): void {
   const ok = globalShortcut.register(accelerator, () => {
+    console.log(`[SwiftType] Hotkey fired: ${accelerator} — recording=${recordingActive}`);
     if (recordingActive) {
       stopRecording();
     } else {
@@ -282,8 +283,10 @@ function registerHotkey(accelerator: string): void {
     }
   });
 
-  if (!ok) {
-    console.warn(`Failed to register hotkey: ${accelerator}`);
+  if (ok) {
+    console.log(`[SwiftType] Hotkey registered: ${accelerator}`);
+  } else {
+    console.warn(`[SwiftType] FAILED to register hotkey: ${accelerator} — already in use by another app?`);
   }
 }
 
