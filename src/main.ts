@@ -237,25 +237,23 @@ async function stopRecording(): Promise<void> {
 
 // ─── Global keyboard hook (uIOhook) ──────────────────────────────────────────
 //
-// Three-finger left hand combo — Ctrl+Win+Alt
-// Hold all three to start recording, release any one to stop.
+// Ctrl+Backtick — hold to record, release to transcribe.
+// Backtick (grave accent) is keycode 41 in uIOhook.
+
+const BACKTICK = 41;
 
 const COMBO_KEYS = new Set<number>([
   UiohookKey.Ctrl,       // 29
   UiohookKey.CtrlRight,  // 3613
-  UiohookKey.Meta,       // 3675 — left Win
-  UiohookKey.MetaRight,  // 3676 — right Win
-  UiohookKey.Alt,        // 56
-  UiohookKey.AltRight,   // 3640
+  BACKTICK,              // 41 — ` (grave accent)
 ]);
 
 const held = new Set<number>();
 
 function comboHeld(): boolean {
-  const hasCtrl = held.has(UiohookKey.Ctrl)  || held.has(UiohookKey.CtrlRight);
-  const hasMeta = held.has(UiohookKey.Meta)  || held.has(UiohookKey.MetaRight);
-  const hasAlt  = held.has(UiohookKey.Alt)   || held.has(UiohookKey.AltRight);
-  return hasCtrl && hasMeta && hasAlt;
+  const hasCtrl     = held.has(UiohookKey.Ctrl) || held.has(UiohookKey.CtrlRight);
+  const hasBacktick = held.has(BACKTICK);
+  return hasCtrl && hasBacktick;
 }
 
 function setupHook(): void {
@@ -279,7 +277,7 @@ function setupHook(): void {
   });
 
   uIOhook.start();
-  console.log("[SwiftType] uIOhook started — hold Ctrl+Win+Alt to record");
+  console.log("[SwiftType] uIOhook started — hold Ctrl+` to record");
 }
 
 // ─── IPC handlers (used by settings window) ──────────────────────────────────

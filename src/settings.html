@@ -107,8 +107,8 @@
 
   <div class="field">
     <label>Record Hotkey</label>
-    <div style="background:#262626;border:1px solid #404040;border-radius:5px;padding:7px 10px;font-size:13px;color:#aaa;letter-spacing:0.02em;">
-      Hold <strong style="color:#e5e5e5;">Ctrl + Win + Alt</strong> to record, release to transcribe
+    <div style="padding:7px 0;font-size:13px;color:#E8735A;letter-spacing:0.01em;">
+      Hold <strong>Ctrl + `</strong> to record, release to transcribe
     </div>
   </div>
 
@@ -155,10 +155,6 @@
         });
       }
 
-      // Hotkey — read from saved settings, fall back to current default
-      capturedAccelerator = settings.hotkey ?? "CommandOrControl+Shift+Space";
-      updateHotkeyBtn();
-
       modelEl.value = settings.model ?? "base";
     }
 
@@ -167,7 +163,6 @@
     saveBtn.addEventListener("click", async () => {
       saveBtn.disabled = true;
       await api.saveSettings({
-        hotkey:     capturedAccelerator,
         microphone: micEl.value,
         model:      modelEl.value,
       });
