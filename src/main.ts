@@ -12,6 +12,8 @@ import { spawn } from "child_process";
 import * as path from "path";
 import * as fs from "fs";
 
+const PYTHON = process.platform === "win32" ? "python" : "python3";
+
 // ─── State ───────────────────────────────────────────────────────────────────
 
 type TrayState = "idle" | "recording" | "transcribing";
@@ -128,7 +130,7 @@ function transcribeAudio(audioPath: string): Promise<string> {
       ? path.join(process.resourcesPath, "whisper_worker.py")
       : path.join(__dirname, "../src/whisper_worker.py");
 
-    const proc = spawn("python3", [workerPath, audioPath, settings.model], {
+    const proc = spawn(PYTHON, [workerPath, audioPath, settings.model], {
       timeout: 60_000,
     });
 
@@ -196,9 +198,11 @@ async function startRecording(): Promise<void> {
     : path.join(__dirname, "../src/whisper_worker.py");
 
   // Start recording subprocess (runs until stopRecording sends SIGTERM)
-  const rec = spawn("python3", [workerPath, "--record", audioTempPath], {
-    detached: false,
-  });
+  const recArgs = [workerPath, "--record", audioTempPath];
+  if (settings.microphone && settings.microphone !== "default") {
+    recArgs.push("--device", settings.microphone);
+  }
+  const rec = spawn(PYTHON, recArgs, { detached: false });
 
   // Attach PID so stopRecording can kill it
   (global as Record<string, unknown>).__recorderPid = rec.pid;
@@ -256,7 +260,7 @@ ipcMain.handle("get-audio-devices", async () => {
       ? path.join(process.resourcesPath, "whisper_worker.py")
       : path.join(__dirname, "../src/whisper_worker.py");
 
-    const proc = spawn("python3", [workerPath, "--list-devices"]);
+    const proc = spawn(PYTHON, [workerPath, "--list-devices"]);
     let out = "";
     proc.stdout.on("data", (d) => { out += d.toString(); });
     proc.on("close", () => {
