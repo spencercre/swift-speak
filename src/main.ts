@@ -118,6 +118,7 @@ function openSettings(): void {
     ? path.join(process.resourcesPath, "src", "settings.html")
     : path.join(__dirname, "../src/settings.html");
   settingsWindow.loadFile(settingsPath);
+  settingsWindow.setIcon(assetIcon("icon-idle.png"));
   settingsWindow.on("closed", () => { settingsWindow = null; });
   settingsWindow.setMenu(null);
 }

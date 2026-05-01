@@ -26,9 +26,7 @@
       border-bottom: 1px solid #333;
     }
 
-    .field {
-      margin-bottom: 20px;
-    }
+    .field { margin-bottom: 20px; }
 
     label {
       display: block;
@@ -53,9 +51,15 @@
 
     select:focus { border-color: #555; }
 
-    /* Hotkey capture button */
+    /* Hotkey row */
+    .hotkey-row {
+      display: flex;
+      gap: 8px;
+      align-items: stretch;
+    }
+
     .hotkey-btn {
-      width: 100%;
+      flex: 1;
       background: #262626;
       border: 1px solid #404040;
       border-radius: 5px;
@@ -67,6 +71,7 @@
       cursor: pointer;
       outline: none;
       transition: border-color 0.15s;
+      min-width: 0;
     }
 
     .hotkey-btn:hover { border-color: #555; }
@@ -76,6 +81,21 @@
       color: #888;
       background: #1e1e1e;
     }
+
+    .btn-test {
+      background: transparent;
+      border: 1px solid #404040;
+      border-radius: 5px;
+      color: #999;
+      font-size: 12px;
+      font-family: inherit;
+      padding: 7px 12px;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: border-color 0.15s, color 0.15s;
+    }
+
+    .btn-test:hover { border-color: #555; color: #ccc; }
 
     .hint {
       font-size: 11px;
@@ -109,11 +129,7 @@
 
     .btn-cancel:hover { border-color: #555; color: #ccc; }
 
-    .btn-save {
-      background: #fff;
-      color: #000;
-    }
-
+    .btn-save { background: #fff; color: #000; }
     .btn-save:hover { background: #e5e5e5; }
 
     .status {
@@ -121,6 +137,30 @@
       color: #22c55e;
       margin-top: 8px;
       min-height: 16px;
+    }
+
+    /* Toast */
+    .toast {
+      position: fixed;
+      bottom: 64px;
+      left: 50%;
+      transform: translateX(-50%) translateY(8px);
+      background: #2a2a2a;
+      border: 1px solid #444;
+      border-radius: 7px;
+      color: #e5e5e5;
+      font-size: 12px;
+      padding: 10px 16px;
+      white-space: nowrap;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s ease, transform 0.2s ease;
+      z-index: 100;
+    }
+
+    .toast.show {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
     }
   </style>
 </head>
@@ -136,8 +176,11 @@
 
   <div class="field">
     <label>Record Hotkey</label>
-    <button class="hotkey-btn" id="hotkeyBtn" type="button">Ctrl+Win</button>
-    <p class="hint">Click to capture a new hotkey combination.</p>
+    <div class="hotkey-row">
+      <button class="hotkey-btn" id="hotkeyBtn" type="button"></button>
+      <button class="btn-test" id="testBtn" type="button">Test</button>
+    </div>
+    <p class="hint">Click the field to capture a new hotkey combination.</p>
   </div>
 
   <div class="field">
@@ -156,17 +199,20 @@
     <button class="btn-save" id="saveBtn">Save</button>
   </div>
 
+  <div class="toast" id="toast"></div>
+
   <script>
-    const api = window.swiftType;
-    const micEl      = document.getElementById("mic");
-    const hotkeyBtn  = document.getElementById("hotkeyBtn");
-    const modelEl    = document.getElementById("model");
-    const statusEl   = document.getElementById("status");
-    const saveBtn    = document.getElementById("saveBtn");
+    const api       = window.swiftType;
+    const micEl     = document.getElementById("mic");
+    const hotkeyBtn = document.getElementById("hotkeyBtn");
+    const testBtn   = document.getElementById("testBtn");
+    const modelEl   = document.getElementById("model");
+    const statusEl  = document.getElementById("status");
+    const saveBtn   = document.getElementById("saveBtn");
+    const toastEl   = document.getElementById("toast");
 
     // ── Key name mappings ──────────────────────────────────────────────────────
 
-    // event.key → Electron accelerator name
     const KEY_TO_ELECTRON = {
       " ": "Space", "ArrowUp": "Up", "ArrowDown": "Down",
       "ArrowLeft": "Left", "ArrowRight": "Right",
@@ -175,7 +221,6 @@
       "Home": "Home", "End": "End", "PageUp": "PageUp", "PageDown": "PageDown",
     };
 
-    // Electron accelerator token → Windows display name
     const ELECTRON_TO_WIN = {
       "Control": "Ctrl", "CommandOrControl": "Ctrl",
       "Super": "Win", "Meta": "Win",
@@ -196,21 +241,27 @@
       if (e.ctrlKey)  mods.push("Control");
       if (e.shiftKey) mods.push("Shift");
       if (e.altKey)   mods.push("Alt");
-      if (e.metaKey)  mods.push("Super");   // Win key on Windows
+      if (e.metaKey)  mods.push("Super");
 
       const raw = e.key;
-      if (MODIFIERS.has(raw) || raw === "Meta") return null; // modifier-only, ignore
+      if (MODIFIERS.has(raw) || raw === "Meta") return null;
 
       let key = KEY_TO_ELECTRON[raw];
-      if (!key) {
-        // Single printable char → uppercase
-        key = raw.length === 1 ? raw.toUpperCase() : raw;
-      }
-
-      // Need at least one modifier for a valid global shortcut
+      if (!key) key = raw.length === 1 ? raw.toUpperCase() : raw;
       if (mods.length === 0) return null;
 
       return [...mods, key].join("+");
+    }
+
+    // ── Toast ──────────────────────────────────────────────────────────────────
+
+    let toastTimer = null;
+
+    function showToast(msg) {
+      clearTimeout(toastTimer);
+      toastEl.textContent = msg;
+      toastEl.classList.add("show");
+      toastTimer = setTimeout(() => toastEl.classList.remove("show"), 3500);
     }
 
     // ── Hotkey capture ─────────────────────────────────────────────────────────
@@ -224,7 +275,7 @@
     let captureListener = null;
 
     hotkeyBtn.addEventListener("click", () => {
-      if (captureListener) return; // already listening
+      if (captureListener) return;
 
       hotkeyBtn.classList.add("listening");
       hotkeyBtn.textContent = "Press your hotkey…";
@@ -234,7 +285,7 @@
         e.stopPropagation();
 
         const accelerator = eventToElectron(e);
-        if (!accelerator) return; // ignore modifier-only press
+        if (!accelerator) return;
 
         capturedAccelerator = accelerator;
         hotkeyBtn.classList.remove("listening");
@@ -247,6 +298,11 @@
       window.addEventListener("keydown", captureListener, true);
     });
 
+    testBtn.addEventListener("click", () => {
+      const display = electronToDisplay(capturedAccelerator);
+      showToast(`Hotkey active — press ${display} anywhere to record`);
+    });
+
     // ── Init ───────────────────────────────────────────────────────────────────
 
     async function init() {
@@ -255,7 +311,7 @@
         api.getAudioDevices(),
       ]);
 
-      // Mic dropdown — "System Default" is always first
+      // Mic dropdown — "System Default" always first, real devices appended
       if (Array.isArray(devices) && devices.length > 0) {
         devices.forEach(d => {
           const opt = document.createElement("option");
@@ -266,10 +322,11 @@
           micEl.appendChild(opt);
         });
       }
-      // If saved mic is "default" or unmatched, "System Default" option stays selected
 
-      capturedAccelerator = settings.hotkey ?? "Control+Super";
+      // Hotkey — read from saved settings, fall back to current default
+      capturedAccelerator = settings.hotkey ?? "CommandOrControl+Shift+Space";
       updateHotkeyBtn();
+
       modelEl.value = settings.model ?? "base";
     }
 
