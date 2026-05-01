@@ -1,0 +1,65 @@
+{
+  "name": "swift-type",
+  "version": "1.0.0",
+  "description": "Hold a key. Speak. Done. Hands-free voice input for Windows.",
+  "main": "dist/main.js",
+  "author": "Spencer",
+  "license": "MIT",
+  "scripts": {
+    "dev": "electron .",
+    "build": "tsc",
+    "dist": "npm run build && electron-builder",
+    "dist:win": "npm run build && electron-builder --win"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "electron": "^41.4.0",
+    "electron-builder": "^26.8.1",
+    "ts-node": "^10.9.2",
+    "typescript": "^6.0.3"
+  },
+  "build": {
+    "appId": "com.getnoodling.swifttype",
+    "productName": "Swift Type",
+    "copyright": "Copyright © 2026 Spencer",
+    "directories": {
+      "output": "release",
+      "buildResources": "assets"
+    },
+    "files": [
+      "dist/**/*",
+      "assets/**/*",
+      "src/whisper_worker.py",
+      "node_modules/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "src/whisper_worker.py",
+        "to": "whisper_worker.py"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "assets/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Swift Type"
+    },
+    "mac": {
+      "target": "dmg",
+      "icon": "assets/icon.icns"
+    },
+    "linux": {
+      "target": "AppImage"
+    }
+  }
+}

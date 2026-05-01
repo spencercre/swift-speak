@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy"
+    content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'" />
+  <title>Swift Type — Settings</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 13px;
+      background: #1a1a1a;
+      color: #e5e5e5;
+      padding: 20px 24px;
+      user-select: none;
+    }
+
+    h1 {
+      font-size: 15px;
+      font-weight: 600;
+      color: #fff;
+      margin-bottom: 24px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid #333;
+    }
+
+    .field {
+      margin-bottom: 20px;
+    }
+
+    label {
+      display: block;
+      font-size: 12px;
+      color: #999;
+      margin-bottom: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    select, input[type="text"] {
+      width: 100%;
+      background: #262626;
+      border: 1px solid #404040;
+      border-radius: 5px;
+      color: #e5e5e5;
+      font-size: 13px;
+      padding: 7px 10px;
+      outline: none;
+      appearance: none;
+    }
+
+    select:focus, input[type="text"]:focus {
+      border-color: #555;
+    }
+
+    .hotkey-row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .hotkey-row input {
+      flex: 1;
+    }
+
+    .hint {
+      font-size: 11px;
+      color: #666;
+      margin-top: 5px;
+    }
+
+    .actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+      margin-top: 28px;
+      padding-top: 16px;
+      border-top: 1px solid #333;
+    }
+
+    button {
+      padding: 7px 18px;
+      border-radius: 5px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      border: 1px solid transparent;
+    }
+
+    .btn-cancel {
+      background: transparent;
+      border-color: #404040;
+      color: #999;
+    }
+
+    .btn-cancel:hover { border-color: #555; color: #ccc; }
+
+    .btn-save {
+      background: #fff;
+      color: #000;
+    }
+
+    .btn-save:hover { background: #e5e5e5; }
+
+    .status {
+      font-size: 11px;
+      color: #22c55e;
+      margin-top: 8px;
+      min-height: 16px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Swift Type Settings</h1>
+
+  <div class="field">
+    <label>Microphone</label>
+    <select id="mic">
+      <option value="default">System Default</option>
+    </select>
+  </div>
+
+  <div class="field">
+    <label>Record Hotkey</label>
+    <div class="hotkey-row">
+      <input type="text" id="hotkey" placeholder="e.g. Control+Super" />
+    </div>
+    <p class="hint">Use Electron accelerator format: Control+Super, Alt+Shift+R, etc.</p>
+  </div>
+
+  <div class="field">
+    <label>Transcription Model</label>
+    <select id="model">
+      <option value="tiny">Tiny — fastest, least accurate</option>
+      <option value="base">Base — recommended</option>
+      <option value="small">Small — slower, most accurate</option>
+    </select>
+  </div>
+
+  <p class="status" id="status"></p>
+
+  <div class="actions">
+    <button class="btn-cancel" onclick="window.close()">Cancel</button>
+    <button class="btn-save" id="saveBtn">Save</button>
+  </div>
+
+  <script>
+    const api = window.swiftType;
+    const micEl    = document.getElementById("mic");
+    const hotkeyEl = document.getElementById("hotkey");
+    const modelEl  = document.getElementById("model");
+    const statusEl = document.getElementById("status");
+    const saveBtn  = document.getElementById("saveBtn");
+
+    async function init() {
+      const [settings, devices] = await Promise.all([
+        api.getSettings(),
+        api.getAudioDevices(),
+      ]);
+
+      // Populate mic dropdown
+      if (devices && devices.length > 0) {
+        micEl.innerHTML = "";
+        devices.forEach((d, i) => {
+          const opt = document.createElement("option");
+          opt.value = d.name ?? d;
+          opt.textContent = d.label ?? d.name ?? d;
+          if ((settings.microphone === "default" && i === 0) ||
+              settings.microphone === (d.name ?? d)) {
+            opt.selected = true;
+          }
+          micEl.appendChild(opt);
+        });
+      } else {
+        // No devices returned — keep "System Default" placeholder
+        micEl.value = "default";
+      }
+
+      hotkeyEl.value = settings.hotkey ?? "Control+Super";
+      modelEl.value  = settings.model  ?? "base";
+    }
+
+    saveBtn.addEventListener("click", async () => {
+      saveBtn.disabled = true;
+      await api.saveSettings({
+        hotkey:     hotkeyEl.value.trim() || "Control+Super",
+        microphone: micEl.value,
+        model:      modelEl.value,
+      });
+      statusEl.textContent = "Saved.";
+      setTimeout(() => { statusEl.textContent = ""; }, 2000);
+      saveBtn.disabled = false;
+    });
+
+    init();
+  </script>
+</body>
+</html>

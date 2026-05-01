@@ -1,0 +1,8 @@
+node_modules/
+dist/
+release/
+.whisper-cache/
+*.wav
+*.log
+.vercel
+.env
