@@ -28,14 +28,20 @@
     },
     "files": [
       "dist/**/*",
-      "assets/**/*",
-      "src/whisper_worker.py",
       "node_modules/**/*"
     ],
     "extraResources": [
       {
+        "from": "assets",
+        "to": "assets"
+      },
+      {
         "from": "src/whisper_worker.py",
         "to": "whisper_worker.py"
+      },
+      {
+        "from": "src/settings.html",
+        "to": "src/settings.html"
       }
     ],
     "win": {

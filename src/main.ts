@@ -112,7 +112,10 @@ function openSettings(): void {
     },
   });
 
-  settingsWindow.loadFile(path.join(__dirname, "../src/settings.html"));
+  const settingsPath = app.isPackaged
+    ? path.join(process.resourcesPath, "src", "settings.html")
+    : path.join(__dirname, "../src/settings.html");
+  settingsWindow.loadFile(settingsPath);
   settingsWindow.on("closed", () => { settingsWindow = null; });
   settingsWindow.setMenu(null);
 }
