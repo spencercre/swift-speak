@@ -70,9 +70,10 @@ const ICON: Record<TrayState, () => Electron.NativeImage> = {
 function setTrayState(state: TrayState): void {
   if (!tray) return;
   tray.setImage(ICON[state]());
+  const modelLabel = settings.model.charAt(0).toUpperCase() + settings.model.slice(1);
   const labels: Record<TrayState, string> = {
-    idle: "Swift Type — Idle",
-    recording: "Swift Type — Recording…",
+    idle:         `Swift Type — ${modelLabel}`,
+    recording:    "Swift Type — Recording…",
     transcribing: "Swift Type — Transcribing…",
   };
   tray.setToolTip(labels[state]);
@@ -82,7 +83,6 @@ function setTrayState(state: TrayState): void {
 
 function createTray(): void {
   tray = new Tray(ICON.idle());
-  tray.setToolTip("Swift Type — Idle");
 
   const menu = Menu.buildFromTemplate([
     { label: "Swift Type", enabled: false },
@@ -340,6 +340,7 @@ ipcMain.handle("get-settings", () => settings);
 ipcMain.handle("save-settings", (_event, newSettings: Settings) => {
   settings = newSettings;
   saveSettings(settings);
+  setTrayState("idle");
 });
 
 ipcMain.handle("get-audio-devices", async () => {
@@ -387,6 +388,7 @@ function runPreflight(): void {
 app.whenReady().then(() => {
   if (process.platform === "darwin") app.dock?.hide();
   createTray();
+  setTrayState("idle");
   setupHook();
   runPreflight();
 });
