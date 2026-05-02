@@ -8,7 +8,7 @@ import {
   Tray,
 } from "electron";
 import { uIOhook, UiohookKey } from "uiohook-napi";
-import { spawn } from "child_process";
+import { spawn, ChildProcess } from "child_process";
 import * as path from "path";
 import * as fs from "fs";
 
@@ -202,6 +202,7 @@ async function injectText(text: string): Promise<void> {
 // ─── Recording flow ───────────────────────────────────────────────────────────
 
 let audioTempPath: string | null = null;
+let recorderProc: ChildProcess | null = null;
 
 async function startRecording(): Promise<void> {
   if (recordingActive) return;
@@ -221,8 +222,8 @@ async function startRecording(): Promise<void> {
   }
   console.log(`[SwiftType] recorder cmd: ${PYTHON} ${recArgs.join(" ")}`);
   const rec = spawn(PYTHON, recArgs, { detached: false });
+  recorderProc = rec;
 
-  (global as Record<string, unknown>).__recorderPid = rec.pid;
   rec.stderr?.on("data", (d) => console.log(`[SwiftType] recorder: ${d.toString().trimEnd()}`));
   rec.on("error", (e) => console.error("[SwiftType] recorder spawn error:", e));
 }
@@ -231,9 +232,37 @@ async function stopRecording(): Promise<void> {
   if (!recordingActive) return;
   recordingActive = false;
 
-  const pid = (global as Record<string, unknown>).__recorderPid as number | undefined;
-  if (pid) {
-    try { process.kill(pid, "SIGTERM"); } catch { /* already dead */ }
+  // Tell Python to stop via stop-file (works on Windows and Unix)
+  if (audioTempPath) {
+    const stopFile = audioTempPath + ".stop";
+    try {
+      fs.writeFileSync(stopFile, "stop");
+      console.log(`[SwiftType] stop-file created: ${stopFile}`);
+    } catch (e) {
+      console.warn("[SwiftType] stop-file write failed:", e);
+    }
+  }
+
+  // Wait for the recorder to exit cleanly so the WAV is fully written
+  const proc = recorderProc;
+  recorderProc = null;
+  if (proc && proc.exitCode === null) {
+    await new Promise<void>((resolve) => {
+      const timeout = setTimeout(() => {
+        console.warn("[SwiftType] recorder did not exit in 3s — force killing");
+        try { proc.kill(); } catch { /* ignore */ }
+        resolve();
+      }, 3000);
+      proc.on("close", () => {
+        clearTimeout(timeout);
+        resolve();
+      });
+    });
+  }
+
+  // Clean up stop-file if Python didn't remove it
+  if (audioTempPath) {
+    try { fs.unlinkSync(audioTempPath + ".stop"); } catch { /* already removed */ }
   }
 
   const wavExists = !!audioTempPath && fs.existsSync(audioTempPath);

@@ -11,7 +11,9 @@ Modes:
       so the first real recording doesn't stall waiting for a 150 MB download.
 
   --record <output.wav> [--device <name>]
-      Records from microphone until SIGTERM, writes WAV to output path.
+      Records from microphone until Electron creates a stop-file at
+      output.wav.stop, then writes the WAV and exits. Falls back to
+      SIGTERM/SIGINT on Unix.
 
   <audio.wav> <model>
       Transcribes audio file, prints {"text": "..."} JSON to stdout.
@@ -21,6 +23,7 @@ import json
 import os
 import signal
 import sys
+import time
 import wave
 
 # Shared cache dir — same location used for both preflight and transcription.
@@ -81,7 +84,8 @@ def preflight(model_size: str):
 def record(output_path: str, device: str | None = None):
     """
     Record mic audio to a WAV file.
-    Runs until SIGTERM — Electron main process kills this when the hotkey is released.
+    Stops when Electron creates output_path + ".stop" (cross-platform).
+    Also handles SIGTERM/SIGINT on Unix as a fallback.
     """
     try:
         import sounddevice as sd
@@ -93,16 +97,28 @@ def record(output_path: str, device: str | None = None):
     SAMPLE_RATE = 16_000  # faster-whisper expects 16 kHz
     CHANNELS = 1
     DTYPE = "int16"
+    STOP_FILE = output_path + ".stop"
+
+    # Remove any stale stop-file from a previous aborted run
+    try:
+        if os.path.exists(STOP_FILE):
+            os.remove(STOP_FILE)
+    except OSError:
+        pass
 
     frames = []
     recording = True
 
-    def handle_sigterm(*_):
+    def handle_stop(*_):
         nonlocal recording
         recording = False
 
-    signal.signal(signal.SIGTERM, handle_sigterm)
-    signal.signal(signal.SIGINT, handle_sigterm)
+    # Signal handlers: reliable on Unix, may be no-ops on Windows — stop-file is primary
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            signal.signal(sig, handle_stop)
+        except (OSError, ValueError):
+            pass
 
     # Resolve device index
     device_index = None
@@ -128,11 +144,16 @@ def record(output_path: str, device: str | None = None):
     ):
         sys.stderr.write(f"Recording to {output_path}…\n")
         while recording:
-            signal.pause()
+            if os.path.exists(STOP_FILE):
+                try:
+                    os.remove(STOP_FILE)
+                except OSError:
+                    pass
+                break
+            time.sleep(0.05)
 
     # Write WAV
     if frames:
-        import numpy as np
         audio = np.concatenate(frames, axis=0)
         with wave.open(output_path, "wb") as wf:
             wf.setnchannels(CHANNELS)
