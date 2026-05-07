@@ -8,4 +8,9 @@ contextBridge.exposeInMainWorld("swiftSpeak", {
   shouldFocusMic:     () => ipcRenderer.invoke("settings-focus-mic-flag"),
   completeOnboarding: () => ipcRenderer.invoke("onboarding-complete"),
   skipOnboarding:     () => ipcRenderer.invoke("onboarding-skip"),
+  onPillState: (cb: (state: unknown) => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, state: unknown) => cb(state);
+    ipcRenderer.on("pill:state", listener);
+    return () => ipcRenderer.off("pill:state", listener);
+  },
 });

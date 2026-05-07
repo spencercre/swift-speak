@@ -1,6 +1,6 @@
 {
   "name": "swift-speak",
-  "version": "2.1.1",
+  "version": "2.2.0",
   "description": "Hold a key. Speak. Done. Hands-free voice input for Windows.",
   "main": "dist/main.js",
   "author": "Spencer",
@@ -58,6 +58,10 @@
       {
         "from": "src/mic-utils.js",
         "to": "src/mic-utils.js"
+      },
+      {
+        "from": "src/dictation-pill.html",
+        "to": "src/dictation-pill.html"
       }
     ],
     "win": {

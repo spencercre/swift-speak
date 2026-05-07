@@ -51,6 +51,7 @@ interface Settings {
   micUserSelected: boolean;
   model: "tiny" | "base" | "small";
   onboardingCompleted: boolean;
+  showDictationPill: boolean;
 }
 
 const SETTINGS_PATH = path.join(app.getPath("userData"), "settings.json");
@@ -130,12 +131,21 @@ function loadSettings(): Settings {
         micUserSelected: !!raw.micUserSelected,
         model,
         onboardingCompleted: !!raw.onboardingCompleted,
+        // Default ON — the pill is the new feedback channel. Only honour an
+        // explicit `false` from disk.
+        showDictationPill: raw.showDictationPill !== false,
       };
     }
   } catch {
     // fall through to defaults
   }
-  return { microphone: null, micUserSelected: false, model: "base", onboardingCompleted: false };
+  return {
+    microphone: null,
+    micUserSelected: false,
+    model: "base",
+    onboardingCompleted: false,
+    showDictationPill: true,
+  };
 }
 
 function saveSettings(s: Settings): void {
@@ -242,7 +252,7 @@ function openSettings(opts: { focusMic?: boolean } = {}): void {
 
   settingsWindow = new BrowserWindow({
     width: 420,
-    height: 340,
+    height: 410,
     resizable: false,
     title: "Swift Speak — Settings",
     webPreferences: {
@@ -388,6 +398,103 @@ function onHotkeyFirstFireAfterOnboarding(): void {
     clearTimeout(followupToastHandle);
     followupToastHandle = null;
     appendLog("toast 2 suppressed: hotkey-first-fire");
+  }
+}
+
+// ─── Dictation pill (real-time feedback during dictation) ──────────────────
+//
+// A 280×56 floating window centred 96px above the bottom of the work area.
+// `focusable: false` is critical: showing the pill must never steal focus
+// from whatever app the user is dictating into. The window is created once
+// and kept alive — show()/hide() between dictations rather than recreating,
+// since BrowserWindow construction takes ~200–400ms and would lag the first
+// audible word.
+
+type PillState =
+  | { kind: "recording" }
+  | { kind: "transcribing" }
+  | { kind: "done" }
+  | { kind: "error"; message: string }
+  | { kind: "hide" };
+
+let pillWindow: BrowserWindow | null = null;
+let pillReady = false;
+let pendingPillState: PillState | null = null;
+
+function createPillWindow(): void {
+  if (pillWindow) return;
+
+  const primary = screen.getPrimaryDisplay().workArea;
+  const W = 280;
+  const H = 56;
+  const x = Math.round(primary.x + (primary.width - W) / 2);
+  // 96px above the bottom of the work area (above the taskbar, not behind it).
+  const y = primary.y + primary.height - 96 - H;
+
+  pillWindow = new BrowserWindow({
+    width: W,
+    height: H,
+    x,
+    y,
+    show: false,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    focusable: false,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    backgroundColor: "#00000000",
+    title: "Swift Speak",
+    webPreferences: {
+      preload: path.join(__dirname, "preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+
+  // The pill is informational only — it must never absorb clicks meant for
+  // the app the user is dictating into.
+  pillWindow.setIgnoreMouseEvents(true);
+  pillWindow.setMenu(null);
+
+  const pillPath = app.isPackaged
+    ? path.join(process.resourcesPath, "src", "dictation-pill.html")
+    : path.join(__dirname, "../src/dictation-pill.html");
+  pillWindow.loadFile(pillPath);
+
+  pillWindow.webContents.once("did-finish-load", () => {
+    pillReady = true;
+    if (pendingPillState && pillWindow && !pillWindow.isDestroyed()) {
+      pillWindow.webContents.send("pill:state", pendingPillState);
+      pendingPillState = null;
+    }
+  });
+
+  pillWindow.on("closed", () => {
+    pillWindow = null;
+    pillReady = false;
+    pendingPillState = null;
+  });
+}
+
+function sendPillState(state: PillState): void {
+  if (!settings.showDictationPill) return;
+  if (!pillWindow || pillWindow.isDestroyed()) createPillWindow();
+  if (!pillWindow) return;
+
+  // showInactive() respects focusable:false so the active app keeps focus.
+  if (!pillWindow.isVisible()) {
+    try { pillWindow.showInactive(); } catch { /* ignore */ }
+  }
+
+  if (pillReady) {
+    pillWindow.webContents.send("pill:state", state);
+  } else {
+    // Drop older queued state — only the latest matters once we're ready.
+    pendingPillState = state;
   }
 }
 
@@ -553,6 +660,7 @@ async function startRecording(): Promise<void> {
   recordingActive = true;
   recordingStartEpoch = Date.now();
   setTrayState("recording");
+  sendPillState({ kind: "recording" });
 
   audioTempPath = path.join(app.getPath("temp"), `swiftspeak-${Date.now()}.wav`);
 
@@ -615,21 +723,37 @@ async function stopRecording(): Promise<void> {
 
   if (!audioTempPath || !wavExists) {
     setTrayState(settings.microphone ? "idle" : "warning");
+    sendPillState({
+      kind: "error",
+      message: settings.microphone ? "Recorder failed" : "No mic",
+    });
     return;
   }
 
   setTrayState("transcribing");
+  sendPillState({ kind: "transcribing" });
 
+  let transcribedText: string | null = null;
   try {
-    const text = await transcribeAudio(audioTempPath);
-    await injectText(text);
+    transcribedText = await transcribeAudio(audioTempPath);
   } catch (e) {
     console.error("Transcription failed:", e);
-  } finally {
-    try { fs.unlinkSync(audioTempPath); } catch { /* ignore */ }
-    audioTempPath = null;
-    setTrayState(settings.microphone ? "idle" : "warning");
+    sendPillState({ kind: "error", message: "Transcription failed" });
   }
+
+  if (transcribedText !== null) {
+    try {
+      await injectText(transcribedText);
+      sendPillState({ kind: "done" });
+    } catch (e) {
+      console.error("Paste failed:", e);
+      sendPillState({ kind: "error", message: "Paste failed" });
+    }
+  }
+
+  try { fs.unlinkSync(audioTempPath); } catch { /* ignore */ }
+  audioTempPath = null;
+  setTrayState(settings.microphone ? "idle" : "warning");
 }
 
 // ─── Global keyboard hook (uIOhook) ──────────────────────────────────────────
@@ -699,6 +823,9 @@ ipcMain.handle("save-settings", (_event, newSettings: Partial<Settings>) => {
     onboardingCompleted: "onboardingCompleted" in (newSettings || {})
       ? !!newSettings.onboardingCompleted
       : settings.onboardingCompleted,
+    showDictationPill: "showDictationPill" in (newSettings || {})
+      ? !!newSettings.showDictationPill
+      : settings.showDictationPill,
   };
   settings = merged;
   saveSettings(settings);
@@ -788,6 +915,11 @@ app.whenReady().then(() => {
   setupHook();
   runPreflight();
   startMicProbe();
+
+  // Prewarm the dictation pill so the first hotkey press doesn't eat the
+  // ~200–400ms BrowserWindow construction cost. The window is created hidden
+  // and only shown when sendPillState() is called.
+  if (settings.showDictationPill) createPillWindow();
 
   // Show onboarding on top of the now-visible tray. Slide 3's arrow points at
   // the tray, so the tray needs to exist before the window appears.
