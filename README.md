@@ -1,4 +1,4 @@
-# Swift Type
+# Swift Speak
 
 Hold a key. Speak. Done.
 
@@ -46,7 +46,7 @@ On a Windows machine (or with Wine/cross-compilation):
 
 ```bash
 npm run dist:win
-# Output: release/Swift Type Setup.exe
+# Output: release/Swift Speak Setup.exe
 ```
 
 ---

@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta http-equiv="Content-Security-Policy"
     content="default-src 'self'; script-src 'self' 'unsafe-inline'" />
-  <title>Swift Type — Mic Probe</title>
+  <title>Swift Speak — Mic Probe</title>
 </head>
 <body>
 <script>
@@ -22,10 +22,10 @@
     return VIRTUAL_PATTERNS.some((p) => l.includes(p));
   };
 
-  const send = (result) => window.swiftType.micProbeResult(result);
+  const send = (result) => window.swiftSpeak.micProbeResult(result);
 
   try {
-    const settings = await window.swiftType.getSettings();
+    const settings = await window.swiftSpeak.getSettings();
     const saved = settings.microphone;
     const userSelected = !!settings.micUserSelected;
 

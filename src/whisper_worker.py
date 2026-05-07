@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-whisper_worker.py — Swift Type audio backend
+whisper_worker.py — Swift Speak audio backend
 
 Modes:
   --list-devices

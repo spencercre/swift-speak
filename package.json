@@ -1,6 +1,6 @@
 {
-  "name": "swift-type",
-  "version": "1.1.7",
+  "name": "swift-speak",
+  "version": "2.0.0",
   "description": "Hold a key. Speak. Done. Hands-free voice input for Windows.",
   "main": "dist/main.js",
   "author": "Spencer",
@@ -19,8 +19,8 @@
     "typescript": "^6.0.3"
   },
   "build": {
-    "appId": "com.getnoodling.swifttype",
-    "productName": "Swift Type",
+    "appId": "com.getnoodling.swiftspeak",
+    "productName": "Swift Speak",
     "copyright": "Copyright © 2026 Spencer",
     "directories": {
       "output": "release",
@@ -68,7 +68,8 @@
       "perMachine": false,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Swift Type"
+      "shortcutName": "Swift Speak",
+      "include": "build/installer.nsh"
     },
     "mac": {
       "target": "dmg",

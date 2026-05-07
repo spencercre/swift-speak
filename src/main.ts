@@ -41,6 +41,53 @@ interface Settings {
 }
 
 const SETTINGS_PATH = path.join(app.getPath("userData"), "settings.json");
+const LOG_PATH = path.join(app.getPath("userData"), "swift-speak.log");
+
+// One-time migration: copy any pre-2.0 user data forward from %APPDATA%\swift-type
+// (and the older productName-shaped %APPDATA%\Swift Type, just in case) into the
+// new userData directory, then remove the legacy folder. Runs synchronously
+// before settings load so we read from the right place on the first 2.0 launch.
+function migrateLegacyUserData(): void {
+  const newDir = app.getPath("userData");
+  const appData = path.dirname(newDir);
+  const legacyCandidates = [
+    path.join(appData, "swift-type"),
+    path.join(appData, "Swift Type"),
+  ];
+
+  for (const oldDir of legacyCandidates) {
+    if (oldDir === newDir) continue;
+    if (!fs.existsSync(oldDir)) continue;
+
+    try {
+      if (!fs.existsSync(newDir)) fs.mkdirSync(newDir, { recursive: true });
+
+      const entries = fs.readdirSync(oldDir);
+      for (const name of entries) {
+        const src = path.join(oldDir, name);
+        const dst = path.join(newDir, name);
+        if (fs.existsSync(dst)) continue;
+        try {
+          const stat = fs.statSync(src);
+          if (stat.isFile()) fs.copyFileSync(src, dst);
+        } catch {
+          // skip unreadable entries (locked Cache files, etc.)
+        }
+      }
+
+      try { fs.rmSync(oldDir, { recursive: true, force: true }); } catch { /* ignore */ }
+
+      const ts = new Date().toISOString();
+      const msg = `[${ts}] [SwiftSpeak] migrated user data ${oldDir} → ${newDir}\n`;
+      try { fs.appendFileSync(LOG_PATH, msg); } catch { /* ignore */ }
+      console.log(msg.trim());
+    } catch (e) {
+      console.warn(`[SwiftSpeak] legacy migration from ${oldDir} failed:`, e);
+    }
+  }
+}
+
+migrateLegacyUserData();
 
 function loadSettings(): Settings {
   try {
@@ -98,14 +145,14 @@ function setTrayState(state: TrayState): void {
   if (!tray) return;
   tray.setImage(ICON[state]());
   if (state === "warning") {
-    tray.setToolTip("Swift Type: No microphone selected — right-click to open Settings");
+    tray.setToolTip("Swift Speak: No microphone selected — right-click to open Settings");
     return;
   }
   const modelLabel = settings.model.charAt(0).toUpperCase() + settings.model.slice(1);
   const labels: Record<Exclude<TrayState, "warning">, string> = {
-    idle:         `Swift Type — ${modelLabel}`,
-    recording:    "Swift Type — Recording…",
-    transcribing: "Swift Type — Transcribing…",
+    idle:         `Swift Speak — ${modelLabel}`,
+    recording:    "Swift Speak — Recording…",
+    transcribing: "Swift Speak — Transcribing…",
   };
   tray.setToolTip(labels[state]);
 }
@@ -116,7 +163,7 @@ function createTray(): void {
   tray = new Tray(ICON.idle());
 
   const menu = Menu.buildFromTemplate([
-    { label: "Swift Type", enabled: false },
+    { label: "Swift Speak", enabled: false },
     { type: "separator" },
     { label: "Settings", click: () => openSettings() },
     { type: "separator" },
@@ -146,7 +193,7 @@ function openSettings(opts: { focusMic?: boolean } = {}): void {
     width: 420,
     height: 340,
     resizable: false,
-    title: "Swift Type — Settings",
+    title: "Swift Speak — Settings",
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
@@ -203,7 +250,7 @@ function startMicProbe(): void {
   // Fail-safe: if the probe never reports back (e.g. crashes), warn after 8s.
   setTimeout(() => {
     if (probeWindow && !probeWindow.isDestroyed()) {
-      console.warn("[SwiftType] mic probe timeout — entering warning state");
+      console.warn("[SwiftSpeak] mic probe timeout — entering warning state");
       handleMicProbeResult({ ok: false, mic: null, reason: "probe-timeout" });
       try { probeWindow.close(); } catch { /* ignore */ }
     }
@@ -223,22 +270,22 @@ function handleMicProbeResult(result: MicProbeResult): void {
     }
 
     if (result.reason === "auto-picked-first-launch") {
-      console.log(`[SwiftType] Auto-selected mic on first launch: ${result.mic.label}`);
+      console.log(`[SwiftSpeak] Auto-selected mic on first launch: ${result.mic.label}`);
     } else if (result.reason === "matched-by-label") {
-      console.log(`[SwiftType] mic resolved by label: ${result.mic.label}`);
+      console.log(`[SwiftSpeak] mic resolved by label: ${result.mic.label}`);
     } else if (result.reason === "matched-by-deviceId-fallback") {
-      console.log(`[SwiftType] mic resolved by deviceId fallback (label missing): ${result.mic.label}`);
+      console.log(`[SwiftSpeak] mic resolved by deviceId fallback (label missing): ${result.mic.label}`);
     } else if (result.reason === "auto-picked-fallback") {
-      console.log(`[SwiftType] saved mic not found — auto-picked first available: ${result.mic.label}`);
+      console.log(`[SwiftSpeak] saved mic not found — auto-picked first available: ${result.mic.label}`);
     } else {
-      console.log(`[SwiftType] mic resolved (${result.reason}): ${result.mic.label}`);
+      console.log(`[SwiftSpeak] mic resolved (${result.reason}): ${result.mic.label}`);
     }
     setTrayState("idle");
   } else {
     settings.microphone = null;
     saveSettings(settings);
     console.warn(
-      `[SwiftType] mic unresolved (${result.reason})${result.detail ? ": " + result.detail : ""}`
+      `[SwiftSpeak] mic unresolved (${result.reason})${result.detail ? ": " + result.detail : ""}`
     );
     setTrayState("warning");
   }
@@ -253,7 +300,7 @@ function transcribeAudio(audioPath: string): Promise<string> {
       : path.join(__dirname, "../src/whisper_worker.py");
 
     const args = [workerPath, audioPath, settings.model];
-    console.log(`[SwiftType] transcribe cmd: ${PYTHON} ${args.join(" ")}`);
+    console.log(`[SwiftSpeak] transcribe cmd: ${PYTHON} ${args.join(" ")}`);
 
     const proc = spawn(PYTHON, args, { timeout: 60_000 });
 
@@ -262,16 +309,16 @@ function transcribeAudio(audioPath: string): Promise<string> {
     proc.stdout.on("data", (d) => {
       const chunk = d.toString();
       out += chunk;
-      console.log(`[SwiftType] whisper stdout: ${chunk.trimEnd()}`);
+      console.log(`[SwiftSpeak] whisper stdout: ${chunk.trimEnd()}`);
     });
     proc.stderr.on("data", (d) => {
       const chunk = d.toString();
       err += chunk;
-      console.log(`[SwiftType] whisper stderr: ${chunk.trimEnd()}`);
+      console.log(`[SwiftSpeak] whisper stderr: ${chunk.trimEnd()}`);
     });
 
     proc.on("close", (code) => {
-      console.log(`[SwiftType] whisper exited code=${code}`);
+      console.log(`[SwiftSpeak] whisper exited code=${code}`);
       if (code !== 0) {
         reject(new Error(`whisper_worker exited ${code}: ${err.trim()}`));
         return;
@@ -279,7 +326,7 @@ function transcribeAudio(audioPath: string): Promise<string> {
       try {
         const result = JSON.parse(out.trim());
         const text = (result.text ?? "").trim();
-        console.log(`[SwiftType] transcribed text: "${text}"`);
+        console.log(`[SwiftSpeak] transcribed text: "${text}"`);
         resolve(text);
       } catch {
         reject(new Error(`Bad JSON from whisper_worker: ${out}`));
@@ -292,11 +339,11 @@ function transcribeAudio(audioPath: string): Promise<string> {
 
 async function injectText(text: string): Promise<void> {
   if (!text) {
-    console.log("[SwiftType] injectText: empty text — skipping paste");
+    console.log("[SwiftSpeak] injectText: empty text — skipping paste");
     return;
   }
   clipboard.writeText(text);
-  console.log(`[SwiftType] clipboard set: "${text.length > 80 ? text.slice(0, 80) + "…" : text}"`);
+  console.log(`[SwiftSpeak] clipboard set: "${text.length > 80 ? text.slice(0, 80) + "…" : text}"`);
 
   // Small delay so the target window can receive focus back
   await new Promise((r) => setTimeout(r, 150));
@@ -308,15 +355,15 @@ async function injectText(text: string): Promise<void> {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const robot = require("@jitsi/robotjs");
       robot.keyTap("v", ["control"]);
-      console.log("[SwiftType] paste sent via robotjs Ctrl+V");
+      console.log("[SwiftSpeak] paste sent via robotjs Ctrl+V");
     } catch {
-      console.log("[SwiftType] robotjs unavailable — clipboard pre-loaded, paste manually");
+      console.log("[SwiftSpeak] robotjs unavailable — clipboard pre-loaded, paste manually");
     }
   } else {
     spawn("xdotool", ["key", "ctrl+v"]).on("error", () => {
-      console.log("[SwiftType] xdotool unavailable — clipboard pre-loaded");
+      console.log("[SwiftSpeak] xdotool unavailable — clipboard pre-loaded");
     });
-    console.log("[SwiftType] paste sent via xdotool Ctrl+V");
+    console.log("[SwiftSpeak] paste sent via xdotool Ctrl+V");
   }
 }
 
@@ -331,7 +378,7 @@ async function startRecording(): Promise<void> {
   recordingStartEpoch = Date.now();
   setTrayState("recording");
 
-  audioTempPath = path.join(app.getPath("temp"), `swifttype-${Date.now()}.wav`);
+  audioTempPath = path.join(app.getPath("temp"), `swiftspeak-${Date.now()}.wav`);
 
   const workerPath = app.isPackaged
     ? path.join(process.resourcesPath, "whisper_worker.py")
@@ -341,12 +388,12 @@ async function startRecording(): Promise<void> {
   if (settings.microphone && settings.microphone.label) {
     recArgs.push("--device", settings.microphone.label);
   }
-  console.log(`[SwiftType] recorder cmd: ${PYTHON} ${recArgs.join(" ")}`);
+  console.log(`[SwiftSpeak] recorder cmd: ${PYTHON} ${recArgs.join(" ")}`);
   const rec = spawn(PYTHON, recArgs, { detached: false });
   recorderProc = rec;
 
-  rec.stderr?.on("data", (d) => console.log(`[SwiftType] recorder: ${d.toString().trimEnd()}`));
-  rec.on("error", (e) => console.error("[SwiftType] recorder spawn error:", e));
+  rec.stderr?.on("data", (d) => console.log(`[SwiftSpeak] recorder: ${d.toString().trimEnd()}`));
+  rec.on("error", (e) => console.error("[SwiftSpeak] recorder spawn error:", e));
 }
 
 async function stopRecording(): Promise<void> {
@@ -358,9 +405,9 @@ async function stopRecording(): Promise<void> {
     const stopFile = audioTempPath + ".stop";
     try {
       fs.writeFileSync(stopFile, "stop");
-      console.log(`[SwiftType] stop-file created: ${stopFile}`);
+      console.log(`[SwiftSpeak] stop-file created: ${stopFile}`);
     } catch (e) {
-      console.warn("[SwiftType] stop-file write failed:", e);
+      console.warn("[SwiftSpeak] stop-file write failed:", e);
     }
   }
 
@@ -370,7 +417,7 @@ async function stopRecording(): Promise<void> {
   if (proc && proc.exitCode === null) {
     await new Promise<void>((resolve) => {
       const timeout = setTimeout(() => {
-        console.warn("[SwiftType] recorder did not exit in 3s — force killing");
+        console.warn("[SwiftSpeak] recorder did not exit in 3s — force killing");
         try { proc.kill(); } catch { /* ignore */ }
         resolve();
       }, 3000);
@@ -388,7 +435,7 @@ async function stopRecording(): Promise<void> {
 
   const wavExists = !!audioTempPath && fs.existsSync(audioTempPath);
   const wavSize   = wavExists ? fs.statSync(audioTempPath!).size : 0;
-  console.log(`[SwiftType] WAV: path=${audioTempPath} exists=${wavExists} size=${wavSize}B`);
+  console.log(`[SwiftSpeak] WAV: path=${audioTempPath} exists=${wavExists} size=${wavSize}B`);
 
   if (!audioTempPath || !wavExists) {
     setTrayState(settings.microphone ? "idle" : "warning");
@@ -435,7 +482,7 @@ function setupHook(): void {
     if (!COMBO_KEYS.has(e.keycode)) return;
     held.add(e.keycode);
     if (comboHeld() && !recordingActive) {
-      console.log("[SwiftType] Combo held — starting recording");
+      console.log("[SwiftSpeak] Combo held — starting recording");
       startRecording();
     }
   });
@@ -445,13 +492,13 @@ function setupHook(): void {
     const wasCombo = comboHeld();
     held.delete(e.keycode);
     if (wasCombo && !comboHeld() && recordingActive) {
-      console.log("[SwiftType] Combo released — stopping recording");
+      console.log("[SwiftSpeak] Combo released — stopping recording");
       stopRecording();
     }
   });
 
   uIOhook.start();
-  console.log("[SwiftType] uIOhook started — hold Ctrl+` to record");
+  console.log("[SwiftSpeak] uIOhook started — hold Ctrl+` to record");
 }
 
 // ─── IPC handlers (used by settings window) ──────────────────────────────────
@@ -510,17 +557,17 @@ function runPreflight(): void {
     ? path.join(process.resourcesPath, "whisper_worker.py")
     : path.join(__dirname, "../src/whisper_worker.py");
 
-  console.log(`[SwiftType] preflight: checking model '${settings.model}'…`);
+  console.log(`[SwiftSpeak] preflight: checking model '${settings.model}'…`);
   const proc = spawn(PYTHON, [workerPath, "--preflight", settings.model]);
-  proc.stderr?.on("data", (d) => console.log(`[SwiftType] preflight: ${d.toString().trimEnd()}`));
+  proc.stderr?.on("data", (d) => console.log(`[SwiftSpeak] preflight: ${d.toString().trimEnd()}`));
   proc.on("close", (code) => {
     if (code === 0) {
-      console.log(`[SwiftType] preflight: model '${settings.model}' ready`);
+      console.log(`[SwiftSpeak] preflight: model '${settings.model}' ready`);
     } else {
-      console.warn(`[SwiftType] preflight: exited ${code} — model may download on first transcription`);
+      console.warn(`[SwiftSpeak] preflight: exited ${code} — model may download on first transcription`);
     }
   });
-  proc.on("error", (e) => console.warn("[SwiftType] preflight spawn error:", e));
+  proc.on("error", (e) => console.warn("[SwiftSpeak] preflight spawn error:", e));
 }
 
 // ─── App lifecycle ────────────────────────────────────────────────────────────

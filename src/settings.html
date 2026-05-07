@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta http-equiv="Content-Security-Policy"
     content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'" />
-  <title>Swift Type — Settings</title>
+  <title>Swift Speak — Settings</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -96,7 +96,7 @@
   </style>
 </head>
 <body>
-  <h1>Swift Type Settings</h1>
+  <h1>Swift Speak Settings</h1>
 
   <div class="field">
     <label>Microphone</label>
@@ -129,7 +129,7 @@
   </div>
 
   <script>
-    const api      = window.swiftType;
+    const api      = window.swiftSpeak;
     const micEl    = document.getElementById("mic");
     const modelEl  = document.getElementById("model");
     const statusEl = document.getElementById("status");
@@ -154,7 +154,7 @@
         permStream = await navigator.mediaDevices.getUserMedia({ audio: true });
       } catch (e) {
         // Without permission, labels will be empty — still fall through.
-        console.warn("[SwiftType] settings: mic permission denied:", e && e.message);
+        console.warn("[SwiftSpeak] settings: mic permission denied:", e && e.message);
       }
       const all = await navigator.mediaDevices.enumerateDevices();
       if (permStream) permStream.getTracks().forEach((t) => t.stop());
@@ -232,7 +232,7 @@
     });
 
     init().catch((e) => {
-      console.error("[SwiftType] settings init failed:", e);
+      console.error("[SwiftSpeak] settings init failed:", e);
       statusEl.style.color = "#f87171";
       statusEl.textContent = "Failed to load settings.";
     });
