@@ -403,12 +403,12 @@ function onHotkeyFirstFireAfterOnboarding(): void {
 
 // ─── Dictation pill (real-time feedback during dictation) ──────────────────
 //
-// A 280×56 floating window centred 96px above the bottom of the work area.
+// A 140×28 floating window centred 96px above the bottom of the work area.
 // `focusable: false` is critical: showing the pill must never steal focus
 // from whatever app the user is dictating into. The window is created once
-// and kept alive — show()/hide() between dictations rather than recreating,
-// since BrowserWindow construction takes ~200–400ms and would lag the first
-// audible word.
+// and kept alive — shown immediately via showInactive() on first load so the
+// OS window state never changes during a uIOhook keydown handler (which would
+// cause focus disruption and spurious keystrokes in the active app).
 
 type PillState =
   | { kind: "recording" }
@@ -425,8 +425,8 @@ function createPillWindow(): void {
   if (pillWindow) return;
 
   const primary = screen.getPrimaryDisplay().workArea;
-  const W = 280;
-  const H = 56;
+  const W = 140;
+  const H = 28;
   const x = Math.round(primary.x + (primary.width - W) / 2);
   // 96px above the bottom of the work area (above the taskbar, not behind it).
   const y = primary.y + primary.height - 96 - H;
@@ -467,6 +467,13 @@ function createPillWindow(): void {
 
   pillWindow.webContents.once("did-finish-load", () => {
     pillReady = true;
+    // Show now (while the pill is CSS-invisible, opacity:0) so the window
+    // is already in the "shown" OS state before any hotkey fires. This
+    // ensures showInactive() is never called inside a uIOhook keydown
+    // handler, which was the root cause of spurious keystroke injection.
+    if (pillWindow && !pillWindow.isDestroyed()) {
+      try { pillWindow.showInactive(); } catch { /* ignore */ }
+    }
     if (pendingPillState && pillWindow && !pillWindow.isDestroyed()) {
       pillWindow.webContents.send("pill:state", pendingPillState);
       pendingPillState = null;
@@ -485,10 +492,8 @@ function sendPillState(state: PillState): void {
   if (!pillWindow || pillWindow.isDestroyed()) createPillWindow();
   if (!pillWindow) return;
 
-  // showInactive() respects focusable:false so the active app keeps focus.
-  if (!pillWindow.isVisible()) {
-    try { pillWindow.showInactive(); } catch { /* ignore */ }
-  }
+  // showInactive() is called once in the did-finish-load handler so the OS
+  // window state is stable before any hotkey fires. No show call here.
 
   if (pillReady) {
     pillWindow.webContents.send("pill:state", state);
@@ -565,10 +570,12 @@ function handleMicProbeResult(result: MicProbeResult): void {
     }
     setTrayState("idle");
   } else {
-    settings.microphone = null;
-    saveSettings(settings);
-    console.warn(
-      `[SwiftSpeak] mic unresolved (${result.reason})${result.detail ? ": " + result.detail : ""}`
+    // Do NOT wipe settings.microphone — the probe may fail transiently
+    // (timeout, permission not yet granted) while the user's saved device is
+    // still valid for the actual recording session. Wiping it was the root
+    // cause of mic preference being lost on upgrade (Issue 5).
+    appendLog(
+      `mic unresolved (${result.reason})${result.detail ? ": " + result.detail : ""} — preserving saved device`
     );
     setTrayState("warning");
   }
@@ -719,14 +726,13 @@ async function stopRecording(): Promise<void> {
 
   const wavExists = !!audioTempPath && fs.existsSync(audioTempPath);
   const wavSize   = wavExists ? fs.statSync(audioTempPath!).size : 0;
-  console.log(`[SwiftSpeak] WAV: path=${audioTempPath} exists=${wavExists} size=${wavSize}B`);
+  appendLog(`WAV: exists=${wavExists} size=${wavSize}B`);
 
   if (!audioTempPath || !wavExists) {
+    const msg = settings.microphone ? "Recorder failed" : "No mic";
+    appendLog(`pill→error: ${msg}`);
     setTrayState(settings.microphone ? "idle" : "warning");
-    sendPillState({
-      kind: "error",
-      message: settings.microphone ? "Recorder failed" : "No mic",
-    });
+    sendPillState({ kind: "error", message: msg });
     return;
   }
 
@@ -736,17 +742,19 @@ async function stopRecording(): Promise<void> {
   let transcribedText: string | null = null;
   try {
     transcribedText = await transcribeAudio(audioTempPath);
+    appendLog(`transcription ok: ${transcribedText.length} chars`);
   } catch (e) {
-    console.error("Transcription failed:", e);
+    appendLog(`transcription error: ${e}`);
     sendPillState({ kind: "error", message: "Transcription failed" });
   }
 
   if (transcribedText !== null) {
     try {
       await injectText(transcribedText);
+      appendLog("pill→done");
       sendPillState({ kind: "done" });
     } catch (e) {
-      console.error("Paste failed:", e);
+      appendLog(`paste error: ${e}`);
       sendPillState({ kind: "error", message: "Paste failed" });
     }
   }
