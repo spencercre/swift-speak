@@ -24,15 +24,17 @@ let tray: Tray | null = null;
 let settingsWindow: BrowserWindow | null = null;
 let probeWindow: BrowserWindow | null = null;
 let onboardingWindow: BrowserWindow | null = null;
-let onboardingShouldStartPulse = false;
+let onboardingShouldFireToasts = false;
 let recordingActive = false;
 let recordingStartEpoch = 0;
 
-// ── Phase 2 pulse state — coral↔amber tray flicker after onboarding "I'm ready"
-let pulseActive = false;
-let pulseInterval: NodeJS.Timeout | null = null;
-let pulseTimeoutHandle: NodeJS.Timeout | null = null;
-let pulseToggle = false;
+// ── Phase 2 follow-up state — second "find me in the tray" toast 15s after
+// onboarding closes, suppressed if the user fires the hotkey first. The
+// earlier coral↔amber tray pulse was dropped in 2.1.1 because Windows 11
+// hides most tray icons behind the overflow arrow and the animation never
+// reaches the user.
+let followupToastHandle: NodeJS.Timeout | null = null;
+let hotkeyHasFiredAfterOnboarding = false;
 
 // Settings window opens directly on the mic dropdown when this flag is set
 // (e.g. after a left-click on the warning tray icon).
@@ -175,8 +177,6 @@ let trayState: TrayState = "idle";
 function setTrayState(state: TrayState): void {
   trayState = state;
   if (!tray) return;
-  // Don't fight the pulse — it owns the icon while running.
-  if (pulseActive && state === "idle") return;
   tray.setImage(ICON[state]());
   if (state === "warning") {
     tray.setToolTip("Swift Speak: No microphone selected — right-click to open Settings");
@@ -207,7 +207,6 @@ function createTray(): void {
   tray.setContextMenu(menu);
 
   tray.on("click", () => {
-    if (pulseActive) stopPulse("tray-click");
     openSettings({ focusMic: trayState === "warning" });
   });
 }
@@ -318,71 +317,78 @@ function openOnboarding(): void {
 
   onboardingWindow.on("closed", () => {
     onboardingWindow = null;
-    if (onboardingShouldStartPulse) {
-      onboardingShouldStartPulse = false;
-      startPulse();
+    if (onboardingShouldFireToasts) {
+      onboardingShouldFireToasts = false;
+      startReadyToasts();
     }
   });
 }
 
-// ─── Phase 2: post-onboarding pulse + native toast ──────────────────────────
+// ─── Phase 2: two stacked Windows toasts after onboarding "I'm ready" ───────
+//
+// Toast 1 fires immediately. Toast 2 fires 15s later only if the hotkey
+// hasn't been used yet — the working assumption is that if they've already
+// dictated something, they obviously found the app and don't need a tip.
 
-function startPulse(): void {
-  if (pulseActive) return;
-  pulseActive = true;
-  pulseToggle = false;
+function appendLog(line: string): void {
+  const ts = new Date().toISOString();
+  try { fs.appendFileSync(LOG_PATH, `[${ts}] [SwiftSpeak] ${line}\n`); } catch { /* ignore */ }
+  console.log(`[SwiftSpeak] ${line}`);
+}
 
-  // Fire the toast immediately. On click, settle the pulse and open settings.
+function startReadyToasts(): void {
+  hotkeyHasFiredAfterOnboarding = false;
+
   if (Notification.isSupported()) {
     try {
       const toast = new Notification({
         title: "Swift Speak is ready",
-        body: "Hold Ctrl+` anywhere to start dictating. Click here to open settings.",
+        body: "Find it in your system tray. Hold Ctrl+` anywhere to dictate.",
         icon: assetIcon("icon-idle.png"),
         silent: false,
       });
-      toast.on("click", () => {
-        if (pulseActive) stopPulse("toast-click");
-        openSettings();
-      });
+      toast.on("click", () => openSettings());
       toast.show();
+      appendLog("toast 1 fired (ready)");
     } catch (e) {
-      console.warn("[SwiftSpeak] toast failed:", e);
+      console.warn("[SwiftSpeak] toast 1 failed:", e);
     }
   }
 
-  // Slow ~1.5s coral↔amber swap. The existing `icon-idle.png` is already coral
-  // (#E8735A) and `tray-warning.png` is amber (#F5A623), so reuse them.
-  pulseInterval = setInterval(() => {
-    if (!tray) return;
-    pulseToggle = !pulseToggle;
-    tray.setImage(assetIcon(pulseToggle ? "tray-warning.png" : "icon-idle.png"));
-  }, 1500);
-
-  pulseTimeoutHandle = setTimeout(() => stopPulse("timeout"), 60_000);
-
-  console.log("[SwiftSpeak] post-onboarding pulse started");
+  followupToastHandle = setTimeout(() => {
+    followupToastHandle = null;
+    if (hotkeyHasFiredAfterOnboarding) {
+      // Belt-and-braces — onHotkeyFirstFireAfterOnboarding should have cleared
+      // this timer already. If we got here anyway, log and bail.
+      appendLog("toast 2 suppressed: hotkey-first-fire");
+      return;
+    }
+    if (Notification.isSupported()) {
+      try {
+        const toast = new Notification({
+          title: "Tip",
+          body: "If you don't see the swift bird, click the ↑ arrow near your clock to find Swift Speak.",
+          icon: assetIcon("icon-idle.png"),
+          silent: true,
+        });
+        toast.on("click", () => openSettings());
+        toast.show();
+        appendLog("toast 2 fired (tray-overflow tip): timeout");
+      } catch (e) {
+        console.warn("[SwiftSpeak] toast 2 failed:", e);
+      }
+    }
+  }, 15_000);
 }
 
-function stopPulse(reason: string): void {
-  if (!pulseActive) return;
-  pulseActive = false;
-
-  if (pulseInterval) { clearInterval(pulseInterval); pulseInterval = null; }
-  if (pulseTimeoutHandle) { clearTimeout(pulseTimeoutHandle); pulseTimeoutHandle = null; }
-
-  // Settle to whatever steady state the app should be in (coral idle if we
-  // have a mic, warning if we don't).
-  if (tray) {
-    const restState: TrayState = settings.microphone ? "idle" : "warning";
-    trayState = restState;
-    tray.setImage(ICON[restState]());
+function onHotkeyFirstFireAfterOnboarding(): void {
+  if (hotkeyHasFiredAfterOnboarding) return;
+  hotkeyHasFiredAfterOnboarding = true;
+  if (followupToastHandle) {
+    clearTimeout(followupToastHandle);
+    followupToastHandle = null;
+    appendLog("toast 2 suppressed: hotkey-first-fire");
   }
-
-  const ts = new Date().toISOString();
-  const msg = `[${ts}] [SwiftSpeak] post-onboarding pulse ended: ${reason}\n`;
-  try { fs.appendFileSync(LOG_PATH, msg); } catch { /* ignore */ }
-  console.log(msg.trim());
 }
 
 // ─── Mic probe (runs at startup in a hidden window) ──────────────────────────
@@ -652,7 +658,7 @@ function setupHook(): void {
     if (!COMBO_KEYS.has(e.keycode)) return;
     held.add(e.keycode);
     if (comboHeld() && !recordingActive) {
-      if (pulseActive) stopPulse("hotkey-first-fire");
+      onHotkeyFirstFireAfterOnboarding();
       console.log("[SwiftSpeak] Combo held — starting recording");
       startRecording();
     }
@@ -696,7 +702,7 @@ ipcMain.handle("save-settings", (_event, newSettings: Partial<Settings>) => {
   };
   settings = merged;
   saveSettings(settings);
-  if (!pulseActive) setTrayState(settings.microphone ? "idle" : "warning");
+  setTrayState(settings.microphone ? "idle" : "warning");
 });
 
 ipcMain.handle("get-audio-devices", async () => {
@@ -733,7 +739,7 @@ ipcMain.handle("settings-focus-mic-flag", () => {
 ipcMain.handle("onboarding-complete", () => {
   settings.onboardingCompleted = true;
   saveSettings(settings);
-  onboardingShouldStartPulse = true;
+  onboardingShouldFireToasts = true;
   if (onboardingWindow && !onboardingWindow.isDestroyed()) {
     try { onboardingWindow.close(); } catch { /* ignore */ }
   }
@@ -743,7 +749,7 @@ ipcMain.handle("onboarding-complete", () => {
 ipcMain.handle("onboarding-skip", () => {
   settings.onboardingCompleted = true;
   saveSettings(settings);
-  onboardingShouldStartPulse = false;
+  onboardingShouldFireToasts = false;
   if (onboardingWindow && !onboardingWindow.isDestroyed()) {
     try { onboardingWindow.close(); } catch { /* ignore */ }
   }
