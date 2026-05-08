@@ -375,7 +375,7 @@ function startReadyToasts(): void {
     try {
       const toast = new Notification({
         title: "Swift Speak is ready",
-        body: "Find it in your system tray. Hold Right Alt + Space anywhere to dictate.",
+        body: "Find it in your system tray. Hold Right Ctrl anywhere to dictate.",
         icon: assetIcon("icon-idle.png"),
         silent: false,
       });
@@ -790,46 +790,65 @@ async function stopRecording(): Promise<void> {
 
 // ─── Global keyboard hook (uIOhook) ──────────────────────────────────────────
 //
-// Right Alt + Space — hold to record, release to transcribe.
-// Right Alt is used specifically (not Left Alt) because Left Alt + Space is the
-// Windows window-control menu shortcut. Ctrl+` was retired in 2.2.2 because
-// Word and Outlook treat it as a dead-key grave-accent prefix, causing
-// apostrophe injection on every auto-repeat while the key is held.
+// Right Ctrl held alone — hold to record, release to transcribe.
+// Right Ctrl is used specifically (not Left Ctrl) so Left Ctrl combos (Ctrl+C,
+// Ctrl+S, etc.) are never affected. If any other key is pressed while Right
+// Ctrl is held, recording is aborted immediately and the keypress passes
+// through to the active window unchanged (normal modifier behavior preserved).
+// Right Alt+Space was retired in 2.2.3: Alt key triggers Office KeyTips and
+// PowerToys Run's Alt+Space launcher.
 
-const COMBO_KEYS = new Set<number>([
-  UiohookKey.AltRight,  // 3640 — right Alt only
-  UiohookKey.Space,     // 57
-]);
+const RCTRL = UiohookKey.CtrlRight; // 3613
 
 const held = new Set<number>();
 
-function comboHeld(): boolean {
-  return held.has(UiohookKey.AltRight) && held.has(UiohookKey.Space);
+function abortRecording(): void {
+  if (!recordingActive) return;
+  recordingActive = false;
+  const proc = recorderProc;
+  recorderProc = null;
+  if (proc && proc.exitCode === null) {
+    try { proc.kill(); } catch { /* ignore */ }
+  }
+  const wav = audioTempPath;
+  audioTempPath = null;
+  if (wav) {
+    setTimeout(() => {
+      try { fs.unlinkSync(wav + ".stop"); } catch { /* ignore */ }
+      try { fs.unlinkSync(wav); } catch { /* ignore */ }
+    }, 500);
+  }
+  sendPillState({ kind: "hide" });
+  setTrayState(settings.microphone || settings.micUserSelected ? "idle" : "warning");
+  appendLog("recording aborted (key pressed during Right Ctrl hold — normal modifier behavior preserved)");
 }
 
 function setupHook(): void {
   uIOhook.on("keydown", (e) => {
-    if (!COMBO_KEYS.has(e.keycode)) return;
+    const wasHeld = held.has(e.keycode);
     held.add(e.keycode);
-    if (comboHeld() && !recordingActive) {
-      onHotkeyFirstFireAfterOnboarding();
-      console.log("[SwiftSpeak] Combo held — starting recording");
-      startRecording();
+    if (e.keycode === RCTRL) {
+      if (!wasHeld && held.size === 1 && !recordingActive) {
+        onHotkeyFirstFireAfterOnboarding();
+        console.log("[SwiftSpeak] Right Ctrl held alone — starting recording");
+        startRecording();
+      }
+    } else if (recordingActive) {
+      console.log(`[SwiftSpeak] Key ${e.keycode} pressed during hold — aborting recording`);
+      abortRecording();
     }
   });
 
   uIOhook.on("keyup", (e) => {
-    if (!COMBO_KEYS.has(e.keycode)) return;
-    const wasCombo = comboHeld();
     held.delete(e.keycode);
-    if (wasCombo && !comboHeld() && recordingActive) {
-      console.log("[SwiftSpeak] Combo released — stopping recording");
+    if (e.keycode === RCTRL && recordingActive) {
+      console.log("[SwiftSpeak] Right Ctrl released — stopping recording");
       stopRecording();
     }
   });
 
   uIOhook.start();
-  console.log("[SwiftSpeak] uIOhook started — hold Right Alt + Space to record");
+  console.log("[SwiftSpeak] uIOhook started — hold Right Ctrl to record");
 }
 
 // ─── IPC handlers (used by settings window) ──────────────────────────────────
