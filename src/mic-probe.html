@@ -66,6 +66,16 @@
       if (chosen) path = "auto-picked-fallback";
     }
 
+    // Path 4: microphone:null + micUserSelected:true — user chose "System Default"
+    // (or this state was written by the 2.2.0 probe-timeout bug). Either way,
+    // auto-pick the first available device instead of falsely reporting
+    // no-input-devices. The Part B repair in main.ts resets micUserSelected
+    // before the probe runs on 2.2.2+ launches; this path is the safety net.
+    if (!chosen && noSavedMic && userSelected) {
+      chosen = inputs[0] || null;
+      if (chosen) path = "auto-picked-system-default";
+    }
+
     if (!chosen) {
       await send({ ok: false, mic: null, reason: "no-input-devices" });
       return;

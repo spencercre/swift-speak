@@ -57,6 +57,16 @@ interface Settings {
 const SETTINGS_PATH = path.join(app.getPath("userData"), "settings.json");
 const LOG_PATH = path.join(app.getPath("userData"), "swift-speak.log");
 
+// ─── Single-instance guard ─────────────────────────────────────────────────
+// Must run before migration and settings load so a second process exits
+// immediately without doing any I/O. Two concurrent instances caused the
+// duplicate-dictation bug (both responded to the hotkey) and deadlocked the
+// mic probe (concurrent getUserMedia on the same USB device). (Fixed 2.2.2)
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+  process.exit(0);
+}
+
 // One-time migration: copy any pre-2.0 user data forward from %APPDATA%\swift-type
 // (and the older productName-shaped %APPDATA%\Swift Type, just in case) into the
 // new userData directory, then remove the legacy folder. Runs synchronously
@@ -161,6 +171,18 @@ if (migration.migratedSettings && !settings.onboardingCompleted) {
   settings.onboardingCompleted = true;
   saveSettings(settings);
   console.log("[SwiftSpeak] migrated 1.x user — marking onboarding complete");
+}
+
+// One-time repair for the 2.2.0/2.2.1 era corruption: the probe-timeout
+// handler used to set microphone:null and save, then the user saved Settings
+// with "System Default" visible, leaving {microphone:null, micUserSelected:true}.
+// That state blocks the probe's auto-pick logic (it guards on !userSelected),
+// so the mic could never self-recover. Clearing micUserSelected lets the probe
+// run the normal auto-pick path on this launch.
+if (settings.microphone === null && settings.micUserSelected) {
+  appendLog("Repaired corrupted settings state from 2.2.0/2.2.1 era — re-enabling auto-pick");
+  settings.micUserSelected = false;
+  saveSettings(settings);
 }
 
 // ─── Tray icons — loaded from assets/ ────────────────────────────────────────
@@ -353,7 +375,7 @@ function startReadyToasts(): void {
     try {
       const toast = new Notification({
         title: "Swift Speak is ready",
-        body: "Find it in your system tray. Hold Ctrl+` anywhere to dictate.",
+        body: "Find it in your system tray. Hold Right Alt + Space anywhere to dictate.",
         icon: assetIcon("icon-idle.png"),
         silent: false,
       });
@@ -761,28 +783,28 @@ async function stopRecording(): Promise<void> {
 
   try { fs.unlinkSync(audioTempPath); } catch { /* ignore */ }
   audioTempPath = null;
-  setTrayState(settings.microphone ? "idle" : "warning");
+  // micUserSelected:true + microphone:null means user explicitly chose system
+  // default — don't show the amber warning after every transcription.
+  setTrayState(settings.microphone || settings.micUserSelected ? "idle" : "warning");
 }
 
 // ─── Global keyboard hook (uIOhook) ──────────────────────────────────────────
 //
-// Ctrl+Backtick — hold to record, release to transcribe.
-// Backtick (grave accent) is keycode 41 in uIOhook.
-
-const BACKTICK = 41;
+// Right Alt + Space — hold to record, release to transcribe.
+// Right Alt is used specifically (not Left Alt) because Left Alt + Space is the
+// Windows window-control menu shortcut. Ctrl+` was retired in 2.2.2 because
+// Word and Outlook treat it as a dead-key grave-accent prefix, causing
+// apostrophe injection on every auto-repeat while the key is held.
 
 const COMBO_KEYS = new Set<number>([
-  UiohookKey.Ctrl,       // 29
-  UiohookKey.CtrlRight,  // 3613
-  BACKTICK,              // 41 — ` (grave accent)
+  UiohookKey.AltRight,  // 3640 — right Alt only
+  UiohookKey.Space,     // 57
 ]);
 
 const held = new Set<number>();
 
 function comboHeld(): boolean {
-  const hasCtrl     = held.has(UiohookKey.Ctrl) || held.has(UiohookKey.CtrlRight);
-  const hasBacktick = held.has(BACKTICK);
-  return hasCtrl && hasBacktick;
+  return held.has(UiohookKey.AltRight) && held.has(UiohookKey.Space);
 }
 
 function setupHook(): void {
@@ -807,7 +829,7 @@ function setupHook(): void {
   });
 
   uIOhook.start();
-  console.log("[SwiftSpeak] uIOhook started — hold Ctrl+` to record");
+  console.log("[SwiftSpeak] uIOhook started — hold Right Alt + Space to record");
 }
 
 // ─── IPC handlers (used by settings window) ──────────────────────────────────
@@ -837,7 +859,7 @@ ipcMain.handle("save-settings", (_event, newSettings: Partial<Settings>) => {
   };
   settings = merged;
   saveSettings(settings);
-  setTrayState(settings.microphone ? "idle" : "warning");
+  setTrayState(settings.microphone || settings.micUserSelected ? "idle" : "warning");
 });
 
 ipcMain.handle("get-audio-devices", async () => {
@@ -915,6 +937,21 @@ function runPreflight(): void {
 }
 
 // ─── App lifecycle ────────────────────────────────────────────────────────────
+
+// Notify the user when they accidentally launch a second instance instead of
+// silently doing nothing (the lock above already exits the second process).
+app.on("second-instance", () => {
+  if (Notification.isSupported()) {
+    try {
+      new Notification({
+        title: "Swift Speak is already running",
+        body: "Check your system tray.",
+        icon: assetIcon("icon-idle.png"),
+        silent: true,
+      }).show();
+    } catch { /* notifications optional */ }
+  }
+});
 
 app.whenReady().then(() => {
   if (process.platform === "darwin") app.dock?.hide();
